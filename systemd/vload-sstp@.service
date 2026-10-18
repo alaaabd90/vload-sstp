@@ -1,0 +1,14 @@
+[Unit]
+Description=vload-sstp SSTP server (client %i)
+After=network-online.target vload-sstp-egress.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/vload-sstp/accel/sbin/accel-pppd -c /etc/vload-sstp/clients/%i/accel-ppp.conf -p /run/vload-sstp-%i.pid
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

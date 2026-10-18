@@ -1,0 +1,15 @@
+[Unit]
+Description=vload-sstp egress (SSTP client traffic -> local SOCKS5 or NAT)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sstp _egress-run
+ExecStartPost=/usr/local/bin/sstp _egress-up
+ExecStopPost=/usr/local/bin/sstp _egress-down
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
