@@ -15,20 +15,28 @@ own local port** on `127.0.0.1`; your SNI router sends that SNI to that port.
   firewall, never touches the default route. The only routing it adds is one
   `ip rule` for the client pool (`10.88.0.0/16`).
 
-## Install
+## Install / update (one command, fresh or existing VPS)
 
 ```bash
-git clone https://github.com/alaaabd90/vload-sstp.git
-cd vload-sstp && sudo bash install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/alaaabd90/vload-sstp/main/install.sh)
 sstp
 ```
+
+The same command updates an existing install: clients, certificates and settings in
+`/etc/vload-sstp` are kept, accel-ppp is rebuilt only if its version changed, and the
+SOCKS tunnel (hev-socks5-tunnel) is installed from `vendor/` whenever it is missing or
+outdated. You can also update from the menu (`9) Update`) or with `sstp update`.
 
 ## The `sstp` menu
 
 ```
-1) Enable   2) Disable   3) Add new client   4) Remove client   5) Adjust client
-6) Show MikroTik commands for a client   7) Egress settings   8) Uninstall   0) Exit
+ 1) Enable            2) Disable            3) Add new client     4) Remove client
+ 5) Adjust client     6) MikroTik commands  7) Change SOCKS proxy (IP / port)
+ 8) Egress mode       9) Update            10) Uninstall          0) Exit
 ```
+
+Client traffic goes by default to the SOCKS5 proxy `127.0.0.1:2063` (the 3x-ui inbound
+that routes to `reverse-9`); change it with option 7 or `sstp socks <ip> <port>`.
 
 Scriptable equivalents:
 
@@ -38,7 +46,9 @@ sstp set  <name> sni=www.example.com port=450 user=u pass=p
 sstp remove <name>
 sstp show <name>            # prints the MikroTik commands
 sstp list | enable | disable
-sstp egress socks 127.0.0.1 2063 | sstp egress nat
+sstp socks 127.0.0.1 2063   # SOCKS5 proxy for client traffic
+sstp egress socks|nat       # via the SOCKS5 proxy, or directly from the VPS
+sstp update
 sstp uninstall
 ```
 

@@ -7,7 +7,9 @@
 #                     sstp set <name> [sni=X] [port=N] [user=U] [pass=P]
 #                     sstp remove <name>
 #                     sstp show <name>            (MikroTik commands)
-#                     sstp egress socks <host> <port> | sstp egress nat
+#                     sstp socks <host> <port>    (SOCKS5 proxy for client traffic)
+#                     sstp egress socks|nat
+#                     sstp update                 (pull latest repo, keep clients)
 #                     sstp uninstall [-y]
 set -euo pipefail
 
@@ -21,6 +23,7 @@ ACCEL="$PREFIX/accel/sbin/accel-pppd"
 ACCEL_CMD="$PREFIX/accel/bin/accel-cmd"
 HEV="$PREFIX/bin/hev-socks5-tunnel"
 TUN=vsstp-egress
+REPO_TARBALL=https://codeload.github.com/alaaabd90/vload-sstp/tar.gz/refs/heads/main
 
 c_ok()  { printf '\033[1;32m%s\033[0m\n' "$*"; }
 c_err() { printf '\033[1;31m%s\033[0m\n' "$*" >&2; }
@@ -212,7 +215,7 @@ cmd_list() {
         (
             . "$CLIENTS/$n/client.env"
             st=$(systemctl is-active "vload-sstp@$n.service" 2>/dev/null || true)
-            sess=$("$ACCEL_CMD" -H 127.0.0.1 -p $((2200 + IDX)) show sessions 2>/dev/null | grep -c '|' || true)
+            sess=$("$ACCEL_CMD" -t 3 -H 127.0.0.1 -p $((2200 + IDX)) show sessions 2>/dev/null | grep -c '|' || true)
             [ "$sess" -gt 0 ] 2>/dev/null && sess=$((sess - 1))
             printf '%-14s %-28s %-6s %-10s %-9s %s\n' "$NAME" "$SNI" "$PORT" "$CUSER" "$st" "${sess:-0}"
         )
@@ -294,18 +297,55 @@ cmd_remove() {
     c_ok "client '$NAME' removed"
 }
 
+socks_reachable() { timeout 3 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null; }
+
+cmd_socks() {
+    need_root
+    load_global
+    local host=${1:-} port=${2:-}
+    [ -n "$host" ] && [ -n "$port" ] || die "usage: sstp socks <host> <port>"
+    [[ "$host" =~ ^[A-Za-z0-9.:-]+$ ]] || die "invalid host: $host"
+    valid_port "$port" || die "invalid port: $port"
+    socks_reachable "$host" "$port" || c_err "warning: nothing answers on $host:$port right now"
+    SOCKS_HOST=$host; SOCKS_PORT=$port; EGRESS_MODE=socks
+    save_global
+    is_enabled && systemctl restart vload-sstp-egress.service
+    c_ok "client traffic now goes to SOCKS5 $SOCKS_HOST:$SOCKS_PORT"
+}
+
 cmd_egress() {
     need_root
     load_global
     case "${1:-}" in
-        socks) SOCKS_HOST=${2:-$SOCKS_HOST}; SOCKS_PORT=${3:-$SOCKS_PORT}
-               valid_port "$SOCKS_PORT" || die "invalid SOCKS port"; EGRESS_MODE=socks;;
+        socks) EGRESS_MODE=socks;;
         nat)   EGRESS_MODE=nat;;
-        *) die "usage: sstp egress socks <host> <port> | sstp egress nat";;
+        *) die "usage: sstp egress socks|nat";;
     esac
     save_global
     is_enabled && systemctl restart vload-sstp-egress.service
-    c_ok "egress set to $EGRESS_MODE"
+    c_ok "egress mode: $EGRESS_MODE$([ "$EGRESS_MODE" = socks ] && echo " -> $SOCKS_HOST:$SOCKS_PORT")"
+}
+
+# re-render every client from its saved settings (after an update) and restart what runs
+cmd_reapply() {
+    need_root
+    local n
+    for n in $(client_names); do ( load_client "$n"; render_client ); done
+    if is_enabled; then
+        systemctl restart vload-sstp-egress.service
+        for n in $(client_names); do restart_client "$n"; done
+    fi
+}
+
+cmd_update() {
+    need_root
+    command -v curl >/dev/null || die "curl is required"
+    local tmp; tmp=$(mktemp -d /tmp/vload-sstp-src.XXXXXX)
+    c_hdr "downloading the latest vload-sstp"
+    curl -fsSL "$REPO_TARBALL" | tar -xz -C "$tmp" --strip-components=1 || { rm -rf "$tmp"; die "download failed"; }
+    bash "$tmp/install.sh" || { rm -rf "$tmp"; die "update failed (the previous version keeps running)"; }
+    rm -rf "$tmp"
+    c_ok "updated"
 }
 
 cmd_uninstall() {
@@ -387,8 +427,9 @@ menu() {
     need_root
     while true; do
         echo; cmd_list; echo
-        c_hdr "1) Enable   2) Disable   3) Add new client   4) Remove client   5) Adjust client"
-        c_hdr "6) Show MikroTik commands for a client   7) Egress settings   8) Uninstall   0) Exit"
+        c_hdr " 1) Enable            2) Disable            3) Add new client     4) Remove client"
+        c_hdr " 5) Adjust client     6) MikroTik commands  7) Change SOCKS proxy (IP / port)"
+        c_hdr " 8) Egress mode       9) Update            10) Uninstall          0) Exit"
         case "$(ask "select")" in
             1) cmd_enable || true;;
             2) cmd_disable || true;;
@@ -406,17 +447,18 @@ menu() {
                v=$(ask "new password (empty = keep, 'random' = generate)"); [ "$v" = random ] && v=$(rand_pass); [ -n "$v" ] && args+=("pass=$v")
                [ "${#args[@]}" -gt 0 ] && { ( cmd_set "$n" "${args[@]}" ) || true; } || echo "nothing changed";;
             6) local n; n=$(pick_client) || continue; ( show_client "$n" ) || true;;
-            7) local m; m=$(ask "egress mode: socks or nat" socks)
-               if [ "$m" = socks ]; then ( cmd_egress socks "$(ask "SOCKS5 host" 127.0.0.1)" "$(ask "SOCKS5 port" 2063)" ) || true
-               else ( cmd_egress nat ) || true; fi;;
-            8) cmd_uninstall; exit 0;;
+            7) load_global
+               ( cmd_socks "$(ask "SOCKS5 IP / host" "$SOCKS_HOST")" "$(ask "SOCKS5 port" "$SOCKS_PORT")" ) || true;;
+            8) ( cmd_egress "$(ask "egress mode: socks (via SOCKS5 proxy) or nat (direct from VPS)" socks)" ) || true;;
+            9) ( cmd_update ) && exec /usr/local/bin/sstp || true;;
+            10) cmd_uninstall; exit 0;;
             0|q|"") exit 0;;
             *) c_err "invalid choice";;
         esac
     done
 }
 
-installed || [ "${1:-}" = uninstall ] || die "vload-sstp is not installed (run install.sh)"
+installed || [ "${1:-}" = uninstall ] || [ "${1:-}" = update ] || die "vload-sstp is not installed (run install.sh)"
 case "${1:-menu}" in
     menu)          menu;;
     list|status)   cmd_list;;
@@ -426,11 +468,14 @@ case "${1:-menu}" in
     set|adjust)    shift; cmd_set "$@";;
     remove|del)    shift; cmd_remove "$@";;
     show)          shift; show_client "${1:-}";;
+    socks)         shift; cmd_socks "$@";;
     egress)        shift; cmd_egress "$@";;
+    update)        cmd_update;;
+    _reapply)      cmd_reapply;;
     uninstall)     shift; cmd_uninstall "$@";;
     _egress-run)   egress_run;;
     _egress-up)    egress_up;;
     _egress-down)  egress_down;;
-    -h|--help|help) sed -n '2,13p' "$0";;
+    -h|--help|help) sed -n '2,15p' "$0";;
     *) die "unknown command: $1 (try: sstp help)";;
 esac
