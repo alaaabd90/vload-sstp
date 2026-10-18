@@ -412,6 +412,10 @@ egress_up() {
     ip link show "$TUN" >/dev/null 2>&1 || die "egress tunnel $TUN did not appear"
     ip link set "$TUN" up
     ip route replace default dev "$TUN" table "$EGRESS_TABLE"
+    # traffic TO the clients (e.g. the server's own replies from the pool gateway) keeps the
+    # normal routes back over SSTP; only traffic FROM clients goes into the SOCKS tunnel
+    ip rule show | grep -q "to $POOL_PREFIX.0.0/16 lookup main" || \
+        ip rule add to "$POOL_PREFIX.0.0/16" lookup main priority "$((EGRESS_RULE_PRIO - 1))"
     ip rule show | grep -q "from $POOL_PREFIX.0.0/16 lookup $EGRESS_TABLE" || \
         ip rule add from "$POOL_PREFIX.0.0/16" lookup "$EGRESS_TABLE" priority "$EGRESS_RULE_PRIO"
 }
