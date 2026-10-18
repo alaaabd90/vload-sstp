@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+ExecStartPre=/usr/local/bin/sstp _egress-down
 ExecStart=/usr/local/bin/sstp _egress-run
 ExecStartPost=/usr/local/bin/sstp _egress-up
 ExecStopPost=/usr/local/bin/sstp _egress-down

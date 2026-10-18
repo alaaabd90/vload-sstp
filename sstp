@@ -381,7 +381,8 @@ egress_down() {
 
 egress_run() {
     load_global
-    egress_down
+    # old rules were already removed by ExecStartPre (_egress-down); cleaning here would race
+    # with ExecStartPost (_egress-up), which systemd starts right after this process
     if [ "$EGRESS_MODE" = nat ]; then
         local wan; wan=$(ip -4 route show default | awk '{print $5; exit}')
         iptables -t nat -A POSTROUTING -s "$POOL_PREFIX.0.0/16" -o "$wan" -m comment --comment vload-sstp -j MASQUERADE
