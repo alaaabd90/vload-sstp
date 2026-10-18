@@ -373,6 +373,7 @@ cmd_uninstall() {
 egress_down() {
     load_global
     while ip rule del from "$POOL_PREFIX.0.0/16" lookup "$EGRESS_TABLE" priority "$EGRESS_RULE_PRIO" 2>/dev/null; do :; done
+    while ip rule del to "$POOL_PREFIX.0.0/16" lookup main priority "$((EGRESS_RULE_PRIO - 1))" 2>/dev/null; do :; done
     ip route flush table "$EGRESS_TABLE" 2>/dev/null || true
     local wan; wan=$(ip -4 route show default | awk '{print $5; exit}')
     while iptables -t nat -D POSTROUTING -s "$POOL_PREFIX.0.0/16" -o "$wan" -m comment --comment vload-sstp -j MASQUERADE 2>/dev/null; do :; done
