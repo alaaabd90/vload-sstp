@@ -7,7 +7,7 @@
 #                     sstp set <name> [sni=X] [port=N] [user=U] [pass=P]
 #                     sstp remove <name>
 #                     sstp show <name>            (MikroTik commands)
-#                     sstp socks <host> <port>    (SOCKS5 proxy for client traffic)
+#                     sstp socks <host> <port> [user pass]  (SOCKS5 proxy for client traffic)
 #                     sstp egress socks|nat
 #                     sstp update                 (pull latest repo, keep clients)
 #                     sstp uninstall [-y]
@@ -34,7 +34,7 @@ need_root() { [ "$(id -u)" -eq 0 ] || die "run as root"; }
 installed() { [ -x "$ACCEL" ]; }
 
 load_global() {
-    EGRESS_MODE=socks; SOCKS_HOST=127.0.0.1; SOCKS_PORT=2063
+    EGRESS_MODE=socks; SOCKS_HOST=127.0.0.1; SOCKS_PORT=2063; SOCKS_USER=; SOCKS_PASS=
     POOL_PREFIX=10.88; EGRESS_TABLE=188; EGRESS_RULE_PRIO=1888
     # shellcheck disable=SC1090
     [ -f "$GLOBAL" ] && . "$GLOBAL"
@@ -46,6 +46,8 @@ save_global() {
 EGRESS_MODE=$EGRESS_MODE
 SOCKS_HOST=$SOCKS_HOST
 SOCKS_PORT=$SOCKS_PORT
+SOCKS_USER='$SOCKS_USER'
+SOCKS_PASS='$SOCKS_PASS'
 POOL_PREFIX=$POOL_PREFIX
 EGRESS_TABLE=$EGRESS_TABLE
 EGRESS_RULE_PRIO=$EGRESS_RULE_PRIO
@@ -307,15 +309,19 @@ socks_reachable() { timeout 3 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null; }
 cmd_socks() {
     need_root
     load_global
-    local host=${1:-} port=${2:-}
-    [ -n "$host" ] && [ -n "$port" ] || die "usage: sstp socks <host> <port>"
+    local host=${1:-} port=${2:-} user=${3:-} pass=${4:-}
+    [ -n "$host" ] && [ -n "$port" ] || die "usage: sstp socks <host> <port> [user pass]"
+    if [ -n "$user" ] || [ -n "$pass" ]; then
+        [[ "$user" =~ ^[A-Za-z0-9._@-]{1,64}$ ]] || die "invalid SOCKS user"
+        [[ "$pass" =~ ^[A-Za-z0-9._@%+=-]{1,64}$ ]] || die "invalid SOCKS password"
+    fi
     [[ "$host" =~ ^[A-Za-z0-9.:-]+$ ]] || die "invalid host: $host"
     valid_port "$port" || die "invalid port: $port"
     socks_reachable "$host" "$port" || c_err "warning: nothing answers on $host:$port right now"
-    SOCKS_HOST=$host; SOCKS_PORT=$port; EGRESS_MODE=socks
+    SOCKS_HOST=$host; SOCKS_PORT=$port; SOCKS_USER=$user; SOCKS_PASS=$pass; EGRESS_MODE=socks
     save_global
     is_enabled && systemctl restart vload-sstp-egress.service
-    c_ok "client traffic now goes to SOCKS5 $SOCKS_HOST:$SOCKS_PORT"
+    c_ok "client traffic now goes to SOCKS5 $SOCKS_HOST:$SOCKS_PORT$([ -n "$SOCKS_USER" ] && echo " (user $SOCKS_USER)")"
 }
 
 cmd_egress() {
@@ -398,6 +404,9 @@ socks5:
   port: $SOCKS_PORT
   address: $SOCKS_HOST
   udp: 'udp'
+$( [ -n "$SOCKS_USER" ] && printf "  username: '%s'
+  password: '%s'
+" "$SOCKS_USER" "$SOCKS_PASS" )
 misc:
   log-level: warn
 EOF
@@ -459,7 +468,7 @@ menu() {
                [ "${#args[@]}" -gt 0 ] && { ( cmd_set "$n" "${args[@]}" ) || true; } || echo "nothing changed";;
             6) local n; n=$(pick_client) || continue; ( show_client "$n" ) || true;;
             7) load_global
-               ( cmd_socks "$(ask "SOCKS5 IP / host" "$SOCKS_HOST")" "$(ask "SOCKS5 port" "$SOCKS_PORT")" ) || true;;
+               ( cmd_socks "$(ask "SOCKS5 IP / host" "$SOCKS_HOST")" "$(ask "SOCKS5 port" "$SOCKS_PORT")"                    "$(ask "SOCKS5 username (empty = none)" "$SOCKS_USER")" "$(ask "SOCKS5 password (empty = none)" "$SOCKS_PASS")" ) || true;;
             8) ( cmd_egress "$(ask "egress mode: socks (via SOCKS5 proxy) or nat (direct from VPS)" socks)" ) || true;;
             9) ( cmd_update ) && exec /usr/local/bin/sstp || true;;
             10) cmd_uninstall; exit 0;;

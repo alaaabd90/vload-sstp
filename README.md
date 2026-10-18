@@ -46,7 +46,7 @@ sstp set  <name> sni=www.example.com port=450 user=u pass=p
 sstp remove <name>
 sstp show <name>            # prints the MikroTik commands
 sstp list | enable | disable
-sstp socks 127.0.0.1 2063   # SOCKS5 proxy for client traffic
+sstp socks 127.0.0.1 2063 [user pass]   # SOCKS5 proxy for client traffic
 sstp egress socks|nat       # via the SOCKS5 proxy, or directly from the VPS
 sstp update
 sstp uninstall
