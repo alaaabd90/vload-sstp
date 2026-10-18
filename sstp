@@ -159,6 +159,10 @@ hello-interval=60
 ip-pool=$NAME
 ifname=vs$IDX-%d
 
+[client-ip-range]
+# SSTP connections arrive from the local SNI router (HAProxy) only
+127.0.0.0/8
+
 [ip-pool]
 gw-ip-address=$net.1
 $net.2-254,name=$NAME
