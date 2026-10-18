@@ -153,7 +153,8 @@ port=$PORT
 ssl-protocol=tls1.2,tls1.3
 ssl-pemfile=$dir/cert.pem
 ssl-keyfile=$dir/key.pem
-host-name=$SNI
+# no host-name: the SNI router already selects this backend, and RouterOS does not
+# send the SNI name as the HTTP Host header (host-name would answer 404)
 timeout=60
 hello-interval=60
 ip-pool=$NAME
